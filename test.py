@@ -3,6 +3,7 @@ import astropy.io.fits as ft
 import numpy as np
 import matplotlib.pyplot as plt
 import galaxy as gl
+import pandas as pd
 
 
 # data = ft.open('test.fits')[0].data
@@ -34,7 +35,16 @@ import galaxy as gl
 # # plt.plot([1]*len(box))
 # plt.show()
 
-a = gl.Galaxy('test.fits')
+a = gl.Galaxy('/home/fmxustc/Desktop/type1/J083732.70+284218.7_g.fits')
 a.truncate()
-a.show_truncate_image()
-a.show_loop_ratio()
+a.eliminate_pollutions()
+print(a.pollution_information.items())
+
+# b = a.initial_information
+# c = a.truncate_information
+# print(3*np.median(b['data'])-3*np.mean(b['data']),2.5*np.median(b['data'])-1.5*np.mean(b['data']))
+# print(3*np.median(c['data'])-3*np.mean(c['data']),2.5*np.median(c['data'])-1.5*np.mean(c['data']))
+# a = pd.read_table('result.txt', header=None)
+# a= np.loadtxt('result.txt')
+
+print(a)
