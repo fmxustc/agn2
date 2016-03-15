@@ -35,10 +35,10 @@ import pandas as pd
 # # plt.plot([1]*len(box))
 # plt.show()
 
-a = gl.Galaxy('/home/fmxustc/Desktop/type1/J083732.70+284218.7_g.fits')
+a = gl.Galaxy('/home/fmxustc/Desktop/type1cut/J120257.82+045045.1_g.fits')
 a.truncate()
-a.eliminate_pollutions()
-print(a.pollution_information.items())
+a.find_pollutions()
+a.eliminate_pollution()
 
 # b = a.initial_information
 # c = a.truncate_information
@@ -47,4 +47,3 @@ print(a.pollution_information.items())
 # a = pd.read_table('result.txt', header=None)
 # a= np.loadtxt('result.txt')
 
-print(a)
