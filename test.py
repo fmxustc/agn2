@@ -1,6 +1,7 @@
 import glob2 as glob
 import astropy.io.fits as ft
 import numpy as np
+import matplotlib.mlab as mlab
 import matplotlib.pyplot as plt
 import galaxy as gl
 import pandas as pd
@@ -35,15 +36,27 @@ import pandas as pd
 # # plt.plot([1]*len(box))
 # plt.show()
 
-a = gl.Galaxy('/home/fmxustc/Desktop/type1cut/J120257.82+045045.1_g.fits')
+a = gl.Galaxy('/home/fmxustc/Desktop/type1cut/J083732.70+284218.7_g.fits')
 a.truncate()
 a.find_pollutions()
 a.eliminate_pollution()
 
-# b = a.initial_information
-# c = a.truncate_information
-# print(3*np.median(b['data'])-3*np.mean(b['data']),2.5*np.median(b['data'])-1.5*np.mean(b['data']))
-# print(3*np.median(c['data'])-3*np.mean(c['data']),2.5*np.median(c['data'])-1.5*np.mean(c['data']))
-# a = pd.read_table('result.txt', header=None)
-# a= np.loadtxt('result.txt')
+
+# data = ft.open('/home/fmxustc/Desktop/tt/J000605.59-092007.0_g.fits')[0].data
+# bg = np.array(data[200:350, 200:350]).flatten()
+#
+#
+# md = np.median(bg)
+# mn = np.mean(bg)
+# std = np.std(bg)
+# var = np.var(bg)
+# print(np.max(bg),np.min(bg),std, mn)
+#
+# a,b,c = plt.hist(bg, 50,normed=1, facecolor='green', alpha=0.75)
+# fl = mlab.normpdf(b,mn,std)
+# plt.plot(b,fl,'r--')
+# plt.grid()
+# plt.show()Threshold
+
+
 
