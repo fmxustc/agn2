@@ -20,22 +20,21 @@ class Galaxy(object):
         # truncate data and attributes
         self.__loopRatio = []
         self.__truncateData = []
-        if os.path.exists('truncate.fits'):
-            os.system('rm truncate.fits')
-        if os.path.exists('result.txt'):
-            os.system('rm result.txt')
         self.__truncateFile = 'truncate.fits'
         self.__truncateRadius = 0
         # pollutions attributes
         self.__SExOutput = ''
         self.__pollutionFile = 'result.txt'
         self.__pollutionDataFrame = None
+        self.__pollutionTreatedData = []
+        self.__pollutionTreatedFile = 'treated.fits'
         # background attributes
         self.__backgroundRMS = None
         self.__backgroundThreshold = None
         self.__backgroundMean = None
         # processed data and galaxy real attributes
-        self.__galaxyData = None
+        self.__galaxyData = []
+        self.__galaxyFile = 'galaxy.fits'
         self.__galaxySeries = None
         self.__galaxyRadius = 0
         self.__galaxyPollutions = None
@@ -48,6 +47,7 @@ class Galaxy(object):
         # some flags
         self.__truncated = False
 
+    # properties
     @property
     def initial_information(self):
         return {
@@ -57,6 +57,38 @@ class Galaxy(object):
             'center': self.__initialCenter
         }
 
+    @property
+    def truncate_information(self):
+        return {
+            'size': self.__boxRadius,
+            'loop': self.__initialLoop,
+            'ratio': self.__loopRatio,
+            'scale': self.__truncateRadius,
+            'data': self.__truncateData,
+            'file': self.__truncateFile
+        }
+
+    @property
+    def pollution_information(self):
+        return {
+            'file': self.__pollutionFile,
+            'info': self.__pollutionDataFrame,
+            'treated': {
+                'info': self.__galaxyPollutions,
+                'data': self.__pollutionTreatedData,
+                'file': self.__pollutionTreatedFile
+            }
+        }
+
+    @property
+    def background_information(self):
+        return {
+            'mean': self.__backgroundMean,
+            'rms': self.__backgroundRMS,
+            'threshold': self.__backgroundThreshold
+        }
+
+    # data process methods
     def truncate(self):
         if self.__truncated:
             print('you have run this function')
@@ -76,56 +108,32 @@ class Galaxy(object):
                 break
         if not self.__truncateRadius:
             raise AttributeError('can\'t get the radius from truncate data')
-        self.__truncateData = self.__initialData[
+        self.__truncateData = np.copy(self.__initialData[
                     self.__initialCenter-self.__truncateRadius:self.__initialCenter+self.__truncateRadius,
-                    self.__initialCenter-self.__truncateRadius:self.__initialCenter+self.__truncateRadius]
+                    self.__initialCenter-self.__truncateRadius:self.__initialCenter+self.__truncateRadius])
+        if os.path.exists(self.__truncateFile):
+            os.system('rm '+self.__truncateFile)
         ft.writeto(self.__truncateFile, self.__truncateData)
         self.__truncated = True
         return
 
-    @property
-    def truncate_information(self):
-        return {
-            'size': self.__boxRadius,
-            'loop': self.__initialLoop,
-            'ratio': self.__loopRatio,
-            'scale': self.__truncateRadius,
-            'data': self.__truncateData,
-            'file': self.__truncateFile
-        }
-
     def find_pollutions(self):
         if not self.__truncated:
-            raise KeyError('you don\'t have the truncate image')
-        subprocess.call('sextractor '+self.__truncateFile, shell=True)
-        self.__SExOutput = subprocess.Popen('sextractor '+self.__truncateFile,
+            raise FileExistsError('you don\'t have the truncate image')
+        if os.path.exists(self.__pollutionFile):
+            os.system('rm '+self.__pollutionFile)
+        subprocess.call('s'+'extractor '+self.__truncateFile, shell=True, executable='/bin/bash')
+        self.__SExOutput = subprocess.Popen('s'+'extractor '+self.__truncateFile,
                                             shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if not os.path.exists(self.__truncateFile):
             raise FileExistsError('your SExtractor software may thread some errors')
         self.__pollutionDataFrame = pd.DataFrame(np.vstack((np.loadtxt(self.__pollutionFile), np.zeros(6))), columns=[
             'MAG_AUTO', 'X_IMAGE', 'Y_IMAGE', 'A_IMAGE', 'B_IMAGE', 'THETA_IMAGE'])
         bg = str(self.__SExOutput.stdout.readlines()[14]).split()
-        self.__backgroundMean = bg[2]
-        self.__backgroundRMS = bg[4]
-        self.__backgroundThreshold = bg[7]
-
+        self.__backgroundMean = float(bg[2])
+        self.__backgroundRMS = float(bg[4])
+        self.__backgroundThreshold = float(bg[7])
         return
-
-    @property
-    def pollution_information(self):
-        return {
-            'file': self.__pollutionFile,
-            'info': self.__pollutionDataFrame,
-            'treated': self.__galaxyPollutions
-        }
-
-    @property
-    def background_information(self):
-        return {
-            'mean': self.__backgroundMean,
-            'rms': self.__backgroundRMS,
-            'threshold': self.__backgroundThreshold
-        }
 
     def eliminate_pollution(self):
         tr = self.__truncateRadius
@@ -148,12 +156,31 @@ class Galaxy(object):
         self.__galaxyPollutions = pdf[
             (abs(pdf.X_IMAGE-gs.X_IMAGE.values) < pdf.RADIUS+gs.RADIUS.values) &
             (abs(pdf.X_IMAGE-gs.X_IMAGE.values) < pdf.RADIUS+gs.RADIUS.values) &
-            pdf.MAG_AUTO < -1]
-        print(self.__galaxyPollutions)
-        for pollution in self.__galaxyPollutions:
-            pass
+            (pdf.MAG_AUTO.values < gs.MAG_AUTO.values*0.2)]
+        self.__pollutionTreatedData = np.copy(self.__truncateData)
+        pollutions = self.__galaxyPollutions.iterrows()
+        size = self.__pollutionTreatedData.shape[0]
+        for pollution in pollutions:
+            p = pollution[1]
+            x_min = max(p.X_IMAGE-p.RADIUS, 0)
+            x_max = min(p.X_IMAGE+p.RADIUS, size-1)
+            y_min = max(p.Y_IMAGE-p.RADIUS, 0)
+            y_max = min(p.Y_IMAGE+p.RADIUS, size-1)
+            ptf = self.__pollutionTreatedData[y_min:y_max, x_min:x_max]
+            self.__pollutionTreatedData[y_min:y_max, x_min:x_max] = \
+                np.random.normal(self.__backgroundMean, self.__backgroundRMS, (ptf.shape[0], ptf.shape[1]))
+        if os.path.exists(self.__pollutionTreatedFile):
+            os.system('rm '+self.__pollutionTreatedFile)
+        ft.writeto(self.__pollutionTreatedFile, self.__pollutionTreatedData)
+        self.__galaxyData = np.copy(self.__pollutionTreatedData[
+                            gs.Y_IMAGE.values-gs.RADIUS.values:gs.Y_IMAGE.values+gs.RADIUS.values,
+                            gs.X_IMAGE.values-gs.RADIUS.values:gs.X_IMAGE.values+gs.RADIUS.values])
+        if os.path.exists(self.__galaxyFile):
+            os.system('rm '+self.__galaxyFile)
+        ft.writeto(self.__galaxyFile, self.__galaxyData)
         return
 
+    # data visualization methods
     def show_loop_ratio(self):
         if os.path.exists('truncate.fits'):
             plt.title('loopRatio')
@@ -169,4 +196,15 @@ class Galaxy(object):
             os.system('ds9 '+self.__truncateFile)
         else:
             raise ChildProcessError('You may not run the function truncate()')
+        return
+
+    def show_treated_image(self):
+
+        os.system('ds9 '+self.__pollutionTreatedFile)
+        return
+
+    def show_galaxy_treated_image(self):
+        if not os.path.exists(self.__galaxyFile):
+            raise FileExistsError('the galaxy file is not exist')
+        os.system('ds9 '+self.__galaxyFile)
         return

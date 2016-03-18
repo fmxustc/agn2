@@ -36,11 +36,13 @@ import pandas as pd
 # # plt.plot([1]*len(box))
 # plt.show()
 
-a = gl.Galaxy('/home/fmxustc/Desktop/type1cut/J083732.70+284218.7_g.fits')
+a = gl.Galaxy('/home/fmxustc/Desktop/type1cut/J075525.29+391109.9_g.fits')
 a.truncate()
+# a.show_truncate_image()
 a.find_pollutions()
 a.eliminate_pollution()
-
+a.show_galaxy_treated_image()
+# a.show_treated_image()
 
 # data = ft.open('/home/fmxustc/Desktop/tt/J000605.59-092007.0_g.fits')[0].data
 # bg = np.array(data[200:350, 200:350]).flatten()
