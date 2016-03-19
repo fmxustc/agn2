@@ -16,24 +16,24 @@ class Galaxy(object):
         self.__hdu.close()
         self.__initialCenter = self.__initialData.shape[0]/2
         self.__boxRadius = min(250, self.__initialCenter)
-        self.__initialLoop = []
+        self.__initialLoop = None
         # truncate data and attributes
-        self.__loopRatio = []
-        self.__truncateData = []
+        self.__loopRatio = None
+        self.__truncateData = None
         self.__truncateFile = 'truncate.fits'
         self.__truncateRadius = 0
         # pollutions attributes
         self.__SExOutput = ''
         self.__pollutionFile = 'result.txt'
         self.__pollutionDataFrame = None
-        self.__pollutionTreatedData = []
+        self.__pollutionTreatedData = None
         self.__pollutionTreatedFile = 'treated.fits'
         # background attributes
         self.__backgroundRMS = None
         self.__backgroundThreshold = None
         self.__backgroundMean = None
         # processed data and galaxy real attributes
-        self.__galaxyData = []
+        self.__galaxyData = None
         self.__galaxyFile = 'galaxy.fits'
         self.__galaxySeries = None
         self.__galaxyRadius = 0
@@ -46,6 +46,11 @@ class Galaxy(object):
         }
         # some flags
         self.__truncated = False
+        self.__found = False
+        self.__treated = False
+        # calculating extra things
+        self.__isInGalaxy = None
+        self.__galaxyMoment = None
 
     # properties
     @property
@@ -88,6 +93,10 @@ class Galaxy(object):
             'threshold': self.__backgroundThreshold
         }
 
+    @property
+    def galaxy_information(self):
+        return self.__galaxySeries
+
     # data process methods
     def truncate(self):
         if self.__truncated:
@@ -127,15 +136,18 @@ class Galaxy(object):
                                             shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if not os.path.exists(self.__truncateFile):
             raise FileExistsError('your SExtractor software may thread some errors')
-        self.__pollutionDataFrame = pd.DataFrame(np.vstack((np.loadtxt(self.__pollutionFile), np.zeros(6))), columns=[
-            'MAG_AUTO', 'X_IMAGE', 'Y_IMAGE', 'A_IMAGE', 'B_IMAGE', 'THETA_IMAGE'])
+        self.__pollutionDataFrame = pd.DataFrame(np.vstack((np.loadtxt(self.__pollutionFile), np.zeros(9))), columns=[
+            'MAG_AUTO', 'X_IMAGE', 'Y_IMAGE', 'A_IMAGE', 'B_IMAGE', 'THETA_IMAGE', 'CXX_IMAGE', 'CYY_IMAGE', 'CXY_IMAGE'])
         bg = str(self.__SExOutput.stdout.readlines()[14]).split()
         self.__backgroundMean = float(bg[2])
         self.__backgroundRMS = float(bg[4])
         self.__backgroundThreshold = float(bg[7])
+        self.__found = True
         return
 
     def eliminate_pollution(self):
+        if not self.__found:
+            raise KeyError('you may not use SExtractor find the pollutions')
         tr = self.__truncateRadius
         pdf = self.__pollutionDataFrame
         a = pdf[abs(np.sin(pdf.THETA_IMAGE)) > abs(np.cos(pdf.THETA_IMAGE))]
@@ -152,6 +164,9 @@ class Galaxy(object):
         elif len(gs) > 1:
             raise ValueError('it occurs two or more galaxy nuclei')
         self.__pollutionDataFrame = self.__pollutionDataFrame.drop(self.__galaxySeries.index)
+        if not np.sum(self.__pollutionDataFrame.values):
+            self.__treated = True
+            return
         pdf = self.__pollutionDataFrame
         self.__galaxyPollutions = pdf[
             (abs(pdf.X_IMAGE-gs.X_IMAGE.values) < pdf.RADIUS+gs.RADIUS.values) &
@@ -178,7 +193,39 @@ class Galaxy(object):
         if os.path.exists(self.__galaxyFile):
             os.system('rm '+self.__galaxyFile)
         ft.writeto(self.__galaxyFile, self.__galaxyData)
+        # change the coordinates of x and y
+        self.__galaxySeries.X_IMAGE -= (self.__pollutionTreatedData.shape[1]-self.__galaxyData.shape[1])/2
+        self.__galaxySeries.Y_IMAGE -= (self.__pollutionTreatedData.shape[0]-self.__galaxyData.shape[0])/2
+        self.__treated = True
         return
+
+    def calculate_parameters(self):
+        if not self.__treated:
+            raise KeyError('you haven\'t treated the image')
+        self.__structuralParameters['A'] = np.sum(abs(self.__galaxyData-np.rot90(self.__galaxyData, 2)))/(2*np.sum(abs(self.__galaxyData)))
+        self.__isInGalaxy = np.zeros(self.__galaxyData.shape)
+        self.__galaxyMoment = np.zeros(self.__galaxyData.shape)
+        _x = self.__galaxySeries.X_IMAGE.values
+        _y = self.__galaxySeries.Y_IMAGE.values
+        cxx = self.__galaxySeries.CXX_IMAGE.values
+        cyy = self.__galaxySeries.CYY_IMAGE.values
+        cxy = self.__galaxySeries.CXY_IMAGE.values
+        r = 3.5
+        for y in np.arange(self.__isInGalaxy.shape[0]):
+            for x in np.arange(self.__isInGalaxy.shape[1]):
+                self.__galaxyMoment[y][x] = self.__galaxyData[y][x]*((x-_x)**2+(y-_y)**2)
+                if cxx*(x-_x)**2+cyy*(y-_y)**2+cxy*(x-_x)*(y-_y) <= r**2:
+                    self.__isInGalaxy[y][x] = 1
+        arg = np.argsort(self.__galaxyData, axis=None)[::-1]
+        f = np.array([self.__galaxyData[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]
+                      for i in np.arange(self.__galaxyData.size)
+                      if self.__isInGalaxy[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]])
+        m = np.array([self.__galaxyMoment[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]
+                      for i in np.arange(self.__galaxyData.size)
+                      if self.__isInGalaxy[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]])
+        self.__structuralParameters['G'] = sum([(2*l-f.size-1)*f[l]/(f.mean()*f.size*(f.size-1)) for l in np.arange(f.size)])
+        k = min([i for i in np.arange(f.size) if sum(f[:i+1]) >= f.sum()*0.2])
+        self.__structuralParameters['M'] = np.log10(sum(m[:k+1])/sum(m))
 
     # data visualization methods
     def show_loop_ratio(self):
