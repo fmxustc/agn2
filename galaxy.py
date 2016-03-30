@@ -4,7 +4,6 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 import subprocess
-import json
 
 
 class Galaxy(object):
@@ -17,7 +16,7 @@ class Galaxy(object):
         self.__initialData = np.copy(self.__hdu[0].data)
         self.__hdu.close()
         self.__initialCentroid = self.__initialData.shape[0]/2
-        self.__boxRadius = min(250, self.__initialCentroid-1)
+        self.__boxRadius = min(200, self.__initialCentroid-1)
         self.__initialLoop = None
         # truncate data and attributes
         self.__loopRatio = None
@@ -40,7 +39,6 @@ class Galaxy(object):
         self.__galaxySeries = None
         self.__galaxyPollutions = None
         self.__galaxySurfaceBrightness = None
-        self.__galaxyMeanSurfaceBrightness = None
         self.__galaxyStructuralParameter = {
             'G': None,
             'M': None,
@@ -126,11 +124,12 @@ class Galaxy(object):
         self.__loopRatio = [self.__initialLoop[k]/sum(self.__initialLoop[:k])
                             for k in np.arange(1, self.__initialLoop.size)]
         for lr in self.__loopRatio:
-            if lr < 1.5e-03:
+            if lr < 1e-03:
                 self.__truncateRadius = self.__loopRatio.index(lr)
                 break
         if not self.__truncateRadius:
-            raise AttributeError('can\'t get the radius from truncate data')
+            self.__truncateRadius = np.argmin(self.__loopRatio[:200])
+            # raise AttributeError('can\'t get the radius from truncate data')
         self.__truncateData = np.copy(self.__initialData[
                     self.__initialCentroid-self.__truncateRadius:self.__initialCentroid+self.__truncateRadius,
                     self.__initialCentroid-self.__truncateRadius:self.__initialCentroid+self.__truncateRadius])
@@ -150,8 +149,25 @@ class Galaxy(object):
                                             shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if not os.path.exists(self.__truncateFile):
             raise FileExistsError('your SExtractor software may thread some errors')
-        self.__pollutionDataFrame = pd.DataFrame(np.vstack((np.loadtxt(self.__pollutionFile), np.zeros(9))), columns=[
-            'MAG_AUTO', 'X_IMAGE', 'Y_IMAGE', 'A_IMAGE', 'B_IMAGE', 'THETA_IMAGE', 'CXX_IMAGE', 'CYY_IMAGE', 'CXY_IMAGE'])
+        tr = open(self.__pollutionFile, 'r')
+        tw = open('pollution.csv', 'w')
+        tw.write('MAG_AUTO,X_IMAGE,Y_IMAGE,A_IMAGE,B_IMAGE,THETA_IMAGE,RADIUS,DIST\n')
+        ct = self.__truncateRadius
+        for line in tr.readlines():
+            elements = line.split()
+            for elem in elements:
+                tw.write(elem+',')
+            cos = abs(np.cos(np.deg2rad(float(elements[5]))))
+            sin = abs(np.sin(np.deg2rad(float(elements[5]))))
+            if cos > sin:
+                tw.write(str(float(elements[3])*cos*4))
+            else:
+                tw.write(str(float(elements[3])*sin*4))
+            tw.write(','+str(abs(float(elements[1])-ct)+abs(float(elements[2])-ct)))
+            tw.write('\n')
+        tr.close()
+        tw.close()
+        self.__pollutionFile = 'pollution.csv'
         bg = str(self.__SExOutput.stdout.readlines()[14]).split()
         self.__backgroundMean = float(bg[2])
         self.__backgroundRMS = float(bg[4])
@@ -162,54 +178,57 @@ class Galaxy(object):
     def eliminate_pollution(self):
         if not self.__found:
             raise KeyError('you may not use SExtractor find the pollutions')
-        tr = self.__truncateRadius
-        pdf = self.__pollutionDataFrame
-        a = pdf[abs(np.sin(np.deg2rad(pdf.THETA_IMAGE))) > abs(np.cos(np.deg2rad(pdf.THETA_IMAGE)))]
-        a['RADIUS'] = a.A_IMAGE*3.5*abs(np.sin(np.deg2rad(a.THETA_IMAGE)))
-        b = pdf[abs(np.sin(np.deg2rad(pdf.THETA_IMAGE))) <= abs(np.cos(np.deg2rad(pdf.THETA_IMAGE)))]
-        b['RADIUS'] = b.A_IMAGE*3.5*abs(np.cos(np.deg2rad(b.THETA_IMAGE)))
-        self.__pollutionDataFrame = pd.concat([a, b])
-        self.__pollutionDataFrame = self.__pollutionDataFrame.sort_index()
-        pdf = self.__pollutionDataFrame
-        self.__galaxySeries = pdf[(abs(pdf.X_IMAGE-tr) < 10) & (abs(pdf.Y_IMAGE-tr) < 10)]
-        gs = self.__galaxySeries
-        if gs is None:
-            raise ValueError('can\'t get the galaxy\'s info')
-        elif len(gs) > 1:
-            raise ValueError('it occurs two or more galaxy nuclei')
-        self.__pollutionDataFrame = self.__pollutionDataFrame.drop(self.__galaxySeries.index)
-        if not np.sum(self.__pollutionDataFrame.values):
-            self.__treated = True
-            return
-        pdf = self.__pollutionDataFrame
-        self.__galaxyPollutions = pdf[
-            (abs(pdf.X_IMAGE-gs.X_IMAGE.values) < pdf.RADIUS+gs.RADIUS.values) &
-            (abs(pdf.X_IMAGE-gs.X_IMAGE.values) < pdf.RADIUS+gs.RADIUS.values) &
-            (pdf.MAG_AUTO.values < gs.MAG_AUTO.values*0.2)]
+        pdf = pd.read_csv(self.__pollutionFile)
+        pdf = pdf.sort_index(by='DIST')
+        pdf.index = range(len(pdf.index))
+        gs = pdf.ix[0]
+        pdf = pdf.drop(pdf.index[0])
+        gp = pdf[(pdf.MAG_AUTO < gs.MAG_AUTO*0.2) &
+                 (pdf.A_IMAGE/pdf.B_IMAGE < 1.5) &
+                 (pdf.DIST-pdf.RADIUS < gs.RADIUS)]
+        pollutions = gp.iterrows()
         self.__pollutionTreatedData = np.copy(self.__truncateData)
-        pollutions = self.__galaxyPollutions.iterrows()
-        size = self.__pollutionTreatedData.shape[0]
+        edge = self.__pollutionTreatedData.shape[0]
         for pollution in pollutions:
             p = pollution[1]
             x_min = max(p.X_IMAGE-p.RADIUS, 0)
-            x_max = min(p.X_IMAGE+p.RADIUS, size-1)
+            x_max = min(p.X_IMAGE+p.RADIUS, edge-1)
             y_min = max(p.Y_IMAGE-p.RADIUS, 0)
-            y_max = min(p.Y_IMAGE+p.RADIUS, size-1)
-            ptf = self.__pollutionTreatedData[y_min:y_max, x_min:x_max]
-            self.__pollutionTreatedData[y_min:y_max, x_min:x_max] = \
-                np.random.normal(self.__backgroundMean, self.__backgroundRMS, (ptf.shape[0], ptf.shape[1]))
+            y_max = min(p.Y_IMAGE+p.RADIUS, edge-1)
+            bg = np.random.normal(self.__backgroundMean, self.__backgroundRMS, int(np.pi*p.A_IMAGE*p.B_IMAGE*16))
+            _x = p.X_IMAGE
+            _y = p.Y_IMAGE
+            a = p.A_IMAGE
+            b = p.B_IMAGE
+            th = np.deg2rad(p.THETA_IMAGE)
+            cxx = np.cos(th)**2/a**2+np.sin(th)**2/b**2
+            cyy = np.sin(th)**2/a**2+np.cos(th)**2/b**2
+            cxy = 2*np.sin(th)*np.cos(th)*(1/a**2-1/b**2)
+            r = 4
+            cnt = 0
+            for i in np.arange(y_min, y_max):
+                for j in np.arange(x_min, x_max):
+                    if cxx*(j-_x)**2+cyy*(i-_y)**2+cxy*(i-_y)*(j-_x) <= r**2:
+                        self.__pollutionTreatedData[i][j] = bg[cnt]
+                        cnt += 1
         if os.path.exists(self.__pollutionTreatedFile):
             os.system('rm '+self.__pollutionTreatedFile)
         ft.writeto(self.__pollutionTreatedFile, self.__pollutionTreatedData)
         self.__galaxyData = np.copy(self.__pollutionTreatedData[
-                            gs.Y_IMAGE.values-gs.RADIUS.values:gs.Y_IMAGE.values+gs.RADIUS.values+1,
-                            gs.X_IMAGE.values-gs.RADIUS.values:gs.X_IMAGE.values+gs.RADIUS.values+1])
+                            max(gs.Y_IMAGE-gs.RADIUS, 0):min(gs.Y_IMAGE+gs.RADIUS+1, edge),
+                            max(gs.X_IMAGE-gs.RADIUS, 0):min(gs.X_IMAGE+gs.RADIUS+1, edge)])
+        if self.__galaxyData.shape[0]-self.__galaxyData.shape[1]:
+            m = min(self.__galaxyData.shape)
+            self.__galaxyData = self.__galaxyData[self.__galaxyData.shape[1]-m:self.__galaxyData.shape[1],
+                                                  self.__galaxyData.shape[0]-m:self.__galaxyData.shape[0]]
         if os.path.exists(self.__galaxyFile):
             os.system('rm '+self.__galaxyFile)
         ft.writeto(self.__galaxyFile, self.__galaxyData)
-        # change the coordinates of x and y
-        self.__galaxySeries.X_IMAGE -= (self.__pollutionTreatedData.shape[1]+1-self.__galaxyData.shape[1])/2+1
-        self.__galaxySeries.Y_IMAGE -= (self.__pollutionTreatedData.shape[0]+1-self.__galaxyData.shape[0])/2+1
+        gs.X_IMAGE = np.argmax(self.__galaxyData) % self.__galaxyData.shape[0]
+        gs.Y_IMAGE = np.argmax(self.__galaxyData) // self.__galaxyData.shape[0]
+        self.__pollutionDataFrame = pdf
+        self.__galaxySeries = gs
+        self.__galaxyPollutions = gp
         self.__treated = True
         return
 
@@ -219,12 +238,15 @@ class Galaxy(object):
         self.__galaxyStructuralParameter['A'] = np.sum(abs(self.__galaxyData-np.rot90(self.__galaxyData, 2)))/(2*np.sum(abs(self.__galaxyData)))
         self.__isInGalaxy = np.zeros(self.__galaxyData.shape)
         self.__galaxyMoment = np.zeros(self.__galaxyData.shape)
-        _x = self.__galaxySeries.X_IMAGE.values
-        _y = self.__galaxySeries.Y_IMAGE.values
-        cxx = self.__galaxySeries.CXX_IMAGE.values
-        cyy = self.__galaxySeries.CYY_IMAGE.values
-        cxy = self.__galaxySeries.CXY_IMAGE.values
-        r = 3.5
+        _x = self.__galaxySeries.X_IMAGE
+        _y = self.__galaxySeries.Y_IMAGE
+        a = self.__galaxySeries.A_IMAGE
+        b = self.__galaxySeries.B_IMAGE
+        th = np.deg2rad(self.__galaxySeries.THETA_IMAGE)
+        cxx = np.cos(th)**2/a**2+np.sin(th)**2/b**2
+        cyy = np.sin(th)**2/a**2+np.cos(th)**2/b**2
+        cxy = 2*np.sin(th)*np.cos(th)*(1/a**2-1/b**2)
+        r = 4
         for y in np.arange(self.__isInGalaxy.shape[0]):
             for x in np.arange(self.__isInGalaxy.shape[1]):
                 self.__galaxyMoment[y][x] = self.__galaxyData[y][x]*((x-_x)**2+(y-_y)**2)
@@ -244,21 +266,26 @@ class Galaxy(object):
             if ff[k] > f.sum()*0.2:
                 self.__galaxyStructuralParameter['M'] = np.log10(np.sum(m[:k])/m.sum())
                 break
-        length = int(self.__galaxySeries.RADIUS.values)
-        self.__galaxySurfaceBrightness = np.copy(self.__initialLoop[:length])
-        # self.__galaxyMeanSurfaceBrightness = np.copy(self.__galaxySurfaceBrightness)
-        print(length, self.__galaxySurfaceBrightness.size)
+        length = int(self.__galaxySeries.RADIUS)
+        self.__galaxySurfaceBrightness = np.array([np.sum([
+            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i, self.__galaxySeries.X_IMAGE-i:self.__galaxySeries.X_IMAGE+i+1],
+            self.__galaxyData[self.__galaxySeries.Y_IMAGE+i, self.__galaxySeries.X_IMAGE-i:self.__galaxySeries.X_IMAGE+i+1],
+            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i:self.__galaxySeries.Y_IMAGE+i+1, self.__galaxySeries.X_IMAGE-i],
+            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i:self.__galaxySeries.Y_IMAGE+i+1, self.__galaxySeries.X_IMAGE+i]
+        ])-np.sum([
+            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i][self.__galaxySeries.X_IMAGE-i],
+            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i][self.__galaxySeries.X_IMAGE+i],
+            self.__galaxyData[self.__galaxySeries.Y_IMAGE+i][self.__galaxySeries.X_IMAGE-i],
+            self.__galaxyData[self.__galaxySeries.Y_IMAGE+i][self.__galaxySeries.X_IMAGE+i]
+        ]) for i in np.arange(self.__galaxySeries.RADIUS)])
+        self.__galaxySurfaceBrightness[0] = self.__galaxyData[self.__galaxySeries.Y_IMAGE][self.__galaxySeries.X_IMAGE]
+        print(self.__galaxySurfaceBrightness)
         found = False
         for i in np.arange(length-1):
-            # self.__galaxyMeanSurfaceBrightness[i+1] += self.__galaxyMeanSurfaceBrightness[i]
-            # self.__galaxyMeanSurfaceBrightness[i] /= (2*i+1)**2
             self.__galaxySurfaceBrightness[i+1] /= 8*(i+1)
-            if self.__galaxySurfaceBrightness[i] < 2*self.__backgroundMean and not found:
-                print(i)
+            if self.__galaxySurfaceBrightness[i] < 5*self.__backgroundRMS and not found:
                 self.__galaxyStructuralParameter['C'] = np.sum(self.__initialLoop[:int(i*0.3)])/np.sum(self.__initialLoop[:i])
                 found = True
-        # self.__galaxyMeanSurfaceBrightness[length-1] /= (2*length-1)**2
-        # eta = np.array([self.__galaxyMeanSurfaceBrightness[i]/self.__galaxySurfaceBrightness[i] for i in np.arange(length)])
         return
 
     # data visualization methods
