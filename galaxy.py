@@ -144,8 +144,8 @@ class Galaxy(object):
             raise FileExistsError('you don\'t have the truncate image')
         if os.path.exists(self.__pollutionFile):
             os.system('rm '+self.__pollutionFile)
-        subprocess.call('s'+'extractor '+self.__truncateFile, shell=True, executable='/bin/bash')
-        self.__SExOutput = subprocess.Popen('s'+'extractor '+self.__truncateFile,
+        subprocess.call('sex '+self.__truncateFile, shell=True, executable='/bin/bash')
+        self.__SExOutput = subprocess.Popen('sex '+self.__truncateFile,
                                             shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if not os.path.exists(self.__truncateFile):
             raise FileExistsError('your SExtractor software may thread some errors')
@@ -160,9 +160,9 @@ class Galaxy(object):
             cos = abs(np.cos(np.deg2rad(float(elements[5]))))
             sin = abs(np.sin(np.deg2rad(float(elements[5]))))
             if cos > sin:
-                tw.write(str(float(elements[3])*cos*4))
+                tw.write(str(float(elements[3])*cos*6))
             else:
-                tw.write(str(float(elements[3])*sin*4))
+                tw.write(str(float(elements[3])*sin*6))
             tw.write(','+str(abs(float(elements[1])-ct)+abs(float(elements[2])-ct)))
             tw.write('\n')
         tr.close()
@@ -184,8 +184,7 @@ class Galaxy(object):
         gs = pdf.ix[0]
         pdf = pdf.drop(pdf.index[0])
         gp = pdf[(pdf.MAG_AUTO < gs.MAG_AUTO*0.2) &
-                 (pdf.A_IMAGE/pdf.B_IMAGE < 1.5) &
-                 (pdf.DIST-pdf.RADIUS < gs.RADIUS)]
+                 (pdf.A_IMAGE/pdf.B_IMAGE < 2.5)]
         pollutions = gp.iterrows()
         self.__pollutionTreatedData = np.copy(self.__truncateData)
         edge = self.__pollutionTreatedData.shape[0]
@@ -195,7 +194,7 @@ class Galaxy(object):
             x_max = min(p.X_IMAGE+p.RADIUS, edge-1)
             y_min = max(p.Y_IMAGE-p.RADIUS, 0)
             y_max = min(p.Y_IMAGE+p.RADIUS, edge-1)
-            bg = np.random.normal(self.__backgroundMean, self.__backgroundRMS, int(np.pi*p.A_IMAGE*p.B_IMAGE*16))
+            bg = np.random.normal(self.__backgroundMean, self.__backgroundRMS, int(np.pi*p.A_IMAGE*p.B_IMAGE*20))
             _x = p.X_IMAGE
             _y = p.Y_IMAGE
             a = p.A_IMAGE
@@ -218,9 +217,9 @@ class Galaxy(object):
                             max(gs.Y_IMAGE-gs.RADIUS, 0):min(gs.Y_IMAGE+gs.RADIUS+1, edge),
                             max(gs.X_IMAGE-gs.RADIUS, 0):min(gs.X_IMAGE+gs.RADIUS+1, edge)])
         if self.__galaxyData.shape[0]-self.__galaxyData.shape[1]:
-            m = min(self.__galaxyData.shape)
-            self.__galaxyData = self.__galaxyData[self.__galaxyData.shape[1]-m:self.__galaxyData.shape[1],
-                                                  self.__galaxyData.shape[0]-m:self.__galaxyData.shape[0]]
+            m = np.min(self.__galaxyData.shape)
+            self.__galaxyData = self.__galaxyData[self.__galaxyData.shape[0]-m:self.__galaxyData.shape[0],
+                                                  self.__galaxyData.shape[1]-m:self.__galaxyData.shape[1]]
         if os.path.exists(self.__galaxyFile):
             os.system('rm '+self.__galaxyFile)
         ft.writeto(self.__galaxyFile, self.__galaxyData)
@@ -253,6 +252,7 @@ class Galaxy(object):
                 if cxx*(x-_x)**2+cyy*(y-_y)**2+cxy*(x-_x)*(y-_y) <= r**2:
                     self.__isInGalaxy[y][x] = 1
         arg = np.argsort(self.__galaxyData, axis=None)[::-1]
+        print(len(arg), self.__galaxyData.shape)
         f = np.array([self.__galaxyData[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]
                       for i in np.arange(self.__galaxyData.size)
                       if self.__isInGalaxy[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]])
@@ -266,25 +266,17 @@ class Galaxy(object):
             if ff[k] > f.sum()*0.2:
                 self.__galaxyStructuralParameter['M'] = np.log10(np.sum(m[:k])/m.sum())
                 break
-        length = int(self.__galaxySeries.RADIUS)
-        self.__galaxySurfaceBrightness = np.array([np.sum([
-            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i, self.__galaxySeries.X_IMAGE-i:self.__galaxySeries.X_IMAGE+i+1],
-            self.__galaxyData[self.__galaxySeries.Y_IMAGE+i, self.__galaxySeries.X_IMAGE-i:self.__galaxySeries.X_IMAGE+i+1],
-            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i:self.__galaxySeries.Y_IMAGE+i+1, self.__galaxySeries.X_IMAGE-i],
-            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i:self.__galaxySeries.Y_IMAGE+i+1, self.__galaxySeries.X_IMAGE+i]
-        ])-np.sum([
-            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i][self.__galaxySeries.X_IMAGE-i],
-            self.__galaxyData[self.__galaxySeries.Y_IMAGE-i][self.__galaxySeries.X_IMAGE+i],
-            self.__galaxyData[self.__galaxySeries.Y_IMAGE+i][self.__galaxySeries.X_IMAGE-i],
-            self.__galaxyData[self.__galaxySeries.Y_IMAGE+i][self.__galaxySeries.X_IMAGE+i]
-        ]) for i in np.arange(self.__galaxySeries.RADIUS)])
-        self.__galaxySurfaceBrightness[0] = self.__galaxyData[self.__galaxySeries.Y_IMAGE][self.__galaxySeries.X_IMAGE]
-        print(self.__galaxySurfaceBrightness)
+        self.__galaxySurfaceBrightness = np.zeros(self.__galaxyData.shape[0])
+        for i in np.arange(self.__galaxyData.shape[0]):
+            for j in np.arange(self.__galaxyData.shape[1]):
+                dist = max(abs(i-self.__galaxySeries.Y_IMAGE), abs(j-self.__galaxySeries.X_IMAGE))
+                self.__galaxySurfaceBrightness[dist] += self.__galaxyData[i][j]
         found = False
-        for i in np.arange(length-1):
-            self.__galaxySurfaceBrightness[i+1] /= 8*(i+1)
-            if self.__galaxySurfaceBrightness[i] < 5*self.__backgroundRMS and not found:
-                self.__galaxyStructuralParameter['C'] = np.sum(self.__initialLoop[:int(i*0.3)])/np.sum(self.__initialLoop[:i])
+        for i in np.arange(self.__galaxySeries.RADIUS):
+            self.__galaxySurfaceBrightness[i + 1] /= 8 * (i + 1)
+            if self.__galaxySurfaceBrightness[i] < 5 * self.__backgroundRMS and not found:
+                self.__galaxyStructuralParameter['C'] = np.sum(self.__initialLoop[:int(i * 0.3)]) / np.sum(
+                    self.__initialLoop[:i])
                 found = True
         return
 
