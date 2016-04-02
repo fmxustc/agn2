@@ -252,7 +252,6 @@ class Galaxy(object):
                 if cxx*(x-_x)**2+cyy*(y-_y)**2+cxy*(x-_x)*(y-_y) <= r**2:
                     self.__isInGalaxy[y][x] = 1
         arg = np.argsort(self.__galaxyData, axis=None)[::-1]
-        print(len(arg), self.__galaxyData.shape)
         f = np.array([self.__galaxyData[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]
                       for i in np.arange(self.__galaxyData.size)
                       if self.__isInGalaxy[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]])
@@ -272,7 +271,7 @@ class Galaxy(object):
                 dist = max(abs(i-self.__galaxySeries.Y_IMAGE), abs(j-self.__galaxySeries.X_IMAGE))
                 self.__galaxySurfaceBrightness[dist] += self.__galaxyData[i][j]
         found = False
-        for i in np.arange(self.__galaxySeries.RADIUS):
+        for i in np.arange(min(self.__galaxySeries.RADIUS, self.__galaxyData.shape[0])-1):
             self.__galaxySurfaceBrightness[i + 1] /= 8 * (i + 1)
             if self.__galaxySurfaceBrightness[i] < 5 * self.__backgroundRMS and not found:
                 self.__galaxyStructuralParameter['C'] = np.sum(self.__initialLoop[:int(i * 0.3)]) / np.sum(

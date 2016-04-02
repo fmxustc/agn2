@@ -5,14 +5,14 @@ import warnings
 
 warnings.filterwarnings('ignore')
 info = pd.read_csv('list.csv')
-t = open('type1.txt', 'w')
+t = open('type2.txt', 'w')
 t.write('NAME,G,M,A,C\n')
-for i in range(35, len(info), 5):
+for i in range(437, len(info)):
     # fg = info.ix[i]['NAME2']+'_g.fits'
-    fr = info.ix[i]['NAME1']+'_r.fits'
-    if os.path.exists('/Users/franky/Desktop/galaxy_fits/type1cut/'+fr):
+    fr = info.ix[i]['NAME2']+'_r.fits'
+    if os.path.exists('/Users/franky/Desktop/galaxy_fits/type2cut/'+fr):
         print(i, fr)
-        a = gl.Galaxy('/Users/franky/Desktop/galaxy_fits/type1cut/'+fr)
+        a = gl.Galaxy('/Users/franky/Desktop/galaxy_fits/type2cut/'+fr)
         a.truncate()
         a.find_pollutions()
         a.eliminate_pollution()
