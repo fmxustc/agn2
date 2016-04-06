@@ -25,7 +25,8 @@ class Galaxy(object):
         self.__truncateRadius = 0
         # pollutions attributes
         self.__SExOutput = ''
-        self.__pollutionFile = 'result.txt'
+        self.__pollutionText = 'result.txt'
+        self.__pollutionFile = 'pollutions.fits'
         self.__pollutionDataFrame = None
         self.__pollutionTreatedData = None
         self.__pollutionTreatedFile = 'treated.fits'
@@ -78,7 +79,7 @@ class Galaxy(object):
     @property
     def pollution_information(self):
         return {
-            'file': self.__pollutionFile,
+            'file': self.__pollutionText,
             'info': self.__pollutionDataFrame,
             'treated': {
                 'info': self.__galaxyPollutions,
@@ -142,17 +143,18 @@ class Galaxy(object):
     def find_pollutions(self):
         if not self.__truncated:
             raise FileExistsError('you don\'t have the truncate image')
-        if os.path.exists(self.__pollutionFile):
-            os.system('rm '+self.__pollutionFile)
-        subprocess.call('sex '+self.__truncateFile, shell=True, executable='/bin/bash')
-        self.__SExOutput = subprocess.Popen('sex '+self.__truncateFile,
+        if os.path.exists(self.__pollutionText):
+            os.system('rm '+self.__pollutionText)
+        subprocess.call('sextractor ' + self.__truncateFile, shell=True, executable='/bin/bash')
+        self.__SExOutput = subprocess.Popen('sextractor ' + self.__truncateFile,
                                             shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if not os.path.exists(self.__truncateFile):
             raise FileExistsError('your SExtractor software may thread some errors')
-        tr = open(self.__pollutionFile, 'r')
+        tr = open(self.__pollutionText, 'r')
         tw = open('pollution.csv', 'w')
         tw.write('MAG_AUTO,X_IMAGE,Y_IMAGE,A_IMAGE,B_IMAGE,THETA_IMAGE,RADIUS,DIST\n')
         ct = self.__truncateRadius
+        r = 8
         for line in tr.readlines():
             elements = line.split()
             for elem in elements:
@@ -160,14 +162,14 @@ class Galaxy(object):
             cos = abs(np.cos(np.deg2rad(float(elements[5]))))
             sin = abs(np.sin(np.deg2rad(float(elements[5]))))
             if cos > sin:
-                tw.write(str(float(elements[3])*cos*6))
+                tw.write(str(float(elements[3])*cos*r))
             else:
-                tw.write(str(float(elements[3])*sin*6))
+                tw.write(str(float(elements[3])*sin*r))
             tw.write(','+str(abs(float(elements[1])-ct)+abs(float(elements[2])-ct)))
             tw.write('\n')
         tr.close()
         tw.close()
-        self.__pollutionFile = 'pollution.csv'
+        self.__pollutionText = 'pollution.csv'
         bg = str(self.__SExOutput.stdout.readlines()[14]).split()
         self.__backgroundMean = float(bg[2])
         self.__backgroundRMS = float(bg[4])
@@ -178,12 +180,12 @@ class Galaxy(object):
     def eliminate_pollution(self):
         if not self.__found:
             raise KeyError('you may not use SExtractor find the pollutions')
-        pdf = pd.read_csv(self.__pollutionFile)
+        pdf = pd.read_csv(self.__pollutionText)
         pdf = pdf.sort_index(by='DIST')
         pdf.index = range(len(pdf.index))
         gs = pdf.ix[0]
         pdf = pdf.drop(pdf.index[0])
-        gp = pdf[(pdf.MAG_AUTO < gs.MAG_AUTO*0.2) &
+        gp = pdf[(pdf.MAG_AUTO < gs.MAG_AUTO*0.1) &
                  (pdf.A_IMAGE/pdf.B_IMAGE < 2.5)]
         pollutions = gp.iterrows()
         self.__pollutionTreatedData = np.copy(self.__truncateData)
@@ -194,7 +196,6 @@ class Galaxy(object):
             x_max = min(p.X_IMAGE+p.RADIUS, edge-1)
             y_min = max(p.Y_IMAGE-p.RADIUS, 0)
             y_max = min(p.Y_IMAGE+p.RADIUS, edge-1)
-            bg = np.random.normal(self.__backgroundMean, self.__backgroundRMS, int(np.pi*p.A_IMAGE*p.B_IMAGE*20))
             _x = p.X_IMAGE
             _y = p.Y_IMAGE
             a = p.A_IMAGE
@@ -203,7 +204,8 @@ class Galaxy(object):
             cxx = np.cos(th)**2/a**2+np.sin(th)**2/b**2
             cyy = np.sin(th)**2/a**2+np.cos(th)**2/b**2
             cxy = 2*np.sin(th)*np.cos(th)*(1/a**2-1/b**2)
-            r = 4
+            r = 5
+            bg = np.random.normal(self.__backgroundMean, self.__backgroundRMS, int(np.pi*p.A_IMAGE*p.B_IMAGE*((r+1)**2)))
             cnt = 0
             for i in np.arange(y_min, y_max):
                 for j in np.arange(x_min, x_max):
@@ -225,6 +227,7 @@ class Galaxy(object):
         ft.writeto(self.__galaxyFile, self.__galaxyData)
         gs.X_IMAGE = np.argmax(self.__galaxyData) % self.__galaxyData.shape[0]
         gs.Y_IMAGE = np.argmax(self.__galaxyData) // self.__galaxyData.shape[0]
+        gs.RADIUS = min(gs.Y_IMAGE/2, gs.RADIUS/2)
         self.__pollutionDataFrame = pdf
         self.__galaxySeries = gs
         self.__galaxyPollutions = gp
@@ -237,6 +240,7 @@ class Galaxy(object):
         self.__galaxyStructuralParameter['A'] = np.sum(abs(self.__galaxyData-np.rot90(self.__galaxyData, 2)))/(2*np.sum(abs(self.__galaxyData)))
         self.__isInGalaxy = np.zeros(self.__galaxyData.shape)
         self.__galaxyMoment = np.zeros(self.__galaxyData.shape)
+        length = 0
         _x = self.__galaxySeries.X_IMAGE
         _y = self.__galaxySeries.Y_IMAGE
         a = self.__galaxySeries.A_IMAGE
@@ -249,8 +253,12 @@ class Galaxy(object):
         for y in np.arange(self.__isInGalaxy.shape[0]):
             for x in np.arange(self.__isInGalaxy.shape[1]):
                 self.__galaxyMoment[y][x] = self.__galaxyData[y][x]*((x-_x)**2+(y-_y)**2)
+                dist = max(abs(y-_y), abs(x-_x))
                 if cxx*(x-_x)**2+cyy*(y-_y)**2+cxy*(x-_x)*(y-_y) <= r**2:
                     self.__isInGalaxy[y][x] = 1
+                if dist > length:
+                    length = dist
+        length += 1
         arg = np.argsort(self.__galaxyData, axis=None)[::-1]
         f = np.array([self.__galaxyData[arg[i]//self.__galaxyData.shape[0]][arg[i] % self.__galaxyData.shape[0]]
                       for i in np.arange(self.__galaxyData.size)
@@ -265,13 +273,14 @@ class Galaxy(object):
             if ff[k] > f.sum()*0.2:
                 self.__galaxyStructuralParameter['M'] = np.log10(np.sum(m[:k])/m.sum())
                 break
-        self.__galaxySurfaceBrightness = np.zeros(self.__galaxyData.shape[0])
+
+        self.__galaxySurfaceBrightness = np.zeros(length)
         for i in np.arange(self.__galaxyData.shape[0]):
             for j in np.arange(self.__galaxyData.shape[1]):
                 dist = max(abs(i-self.__galaxySeries.Y_IMAGE), abs(j-self.__galaxySeries.X_IMAGE))
                 self.__galaxySurfaceBrightness[dist] += self.__galaxyData[i][j]
         found = False
-        for i in np.arange(min(self.__galaxySeries.RADIUS, self.__galaxyData.shape[0])-1):
+        for i in np.arange(length-1):
             self.__galaxySurfaceBrightness[i + 1] /= 8 * (i + 1)
             if self.__galaxySurfaceBrightness[i] < 5 * self.__backgroundRMS and not found:
                 self.__galaxyStructuralParameter['C'] = np.sum(self.__initialLoop[:int(i * 0.3)]) / np.sum(
@@ -285,25 +294,38 @@ class Galaxy(object):
             plt.title('loopRatio')
             plt.plot([1e-03]*len(self.__loopRatio))
             plt.plot(self.__loopRatio)
+            plt.plot(self.__galaxySurfaceBrightness)
             plt.show()
         else:
             raise ChildProcessError('You may not run the function truncate()')
         return
 
     def show_truncate_image(self):
-        if self.__truncated:
-            os.system('ds9 '+self.__truncateFile)
-        else:
-            raise ChildProcessError('You may not run the function truncate()')
+        if not os.path.exists(self.__truncateFile):
+            raise FileExistsError('the truncate file is not exist')
+        os.system('ds9 -scale mode zscale -zoom 2 ' + self.__truncateFile)
         return
 
     def show_treated_image(self):
+        if not os.path.exists(self.__pollutionTreatedFile):
+            raise FileExistsError('the treated file is not exist')
+        os.system('ds9 -scale mode zscale -zoom 2 ' + self.__pollutionTreatedFile)
+        return
 
-        os.system('ds9 '+self.__pollutionTreatedFile)
+    def show_pollutions(self):
+        if not os.path.exists(self.__pollutionFile):
+            raise FileExistsError('the galaxy file is not exist')
+        os.system('ds9 -scale mode zscale -zoom 2 '+self.__pollutionFile)
         return
 
     def show_galaxy_treated_image(self):
         if not os.path.exists(self.__galaxyFile):
             raise FileExistsError('the galaxy file is not exist')
-        os.system('ds9 '+self.__galaxyFile)
+        os.system('ds9 -scale mode zscale -zoom 2 '+self.__galaxyFile)
         return
+
+    def show_edge_of_galaxy(self):
+        if os.path.exists('edge.fits'):
+            os.system('rm edge.fits')
+        ft.writeto('edge.fits', self.__isInGalaxy)
+        os.system('ds9 -scale mode zscale -zoom 2 edge.fits')
