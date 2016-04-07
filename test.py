@@ -8,12 +8,12 @@ When you want to run the script in your PC, please change the path of files
 warnings.filterwarnings('ignore')
 
 
-a = galaxy.Galaxy('/home/fmxustc/Desktop/type1cut/J080538.66+261005.5_r.fits')
+a = galaxy.Galaxy('/home/fmxustc/Desktop/type2cut/J112757.53-011240.2_r.fits')
 a.truncate()
 a.find_pollutions()
 a.eliminate_pollution()
-a.calculate_parameters()
-a.show_edge_of_galaxy()
+# a.calculate_parameters()
+# a.show_edge_of_galaxy()
 
 # r = open('type12_mc.txt', 'r')
 # w = open('list.csv', 'w')

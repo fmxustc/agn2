@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 import subprocess
+import time
 
 
 class Galaxy(object):
@@ -26,6 +27,7 @@ class Galaxy(object):
         # pollutions attributes
         self.__SExOutput = ''
         self.__pollutionText = 'result.txt'
+        self.__pollutionCsv = 'pollution.csv'
         self.__pollutionFile = 'pollutions.fits'
         self.__pollutionDataFrame = None
         self.__pollutionTreatedData = None
@@ -140,36 +142,44 @@ class Galaxy(object):
         self.__truncated = True
         return
 
-    def find_pollutions(self):
-        if not self.__truncated:
-            raise FileExistsError('you don\'t have the truncate image')
-        if os.path.exists(self.__pollutionText):
-            os.system('rm '+self.__pollutionText)
-        subprocess.call('sextractor ' + self.__truncateFile, shell=True, executable='/bin/bash')
-        self.__SExOutput = subprocess.Popen('sextractor ' + self.__truncateFile,
-                                            shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        if not os.path.exists(self.__truncateFile):
-            raise FileExistsError('your SExtractor software may thread some errors')
+    def txt2csv(self):
+        if os.path.exists(self.__pollutionCsv):
+            os.system('rm ' + self.__pollutionCsv)
         tr = open(self.__pollutionText, 'r')
-        tw = open('pollution.csv', 'w')
+        tw = open(self.__pollutionCsv, 'w')
         tw.write('MAG_AUTO,X_IMAGE,Y_IMAGE,A_IMAGE,B_IMAGE,THETA_IMAGE,RADIUS,DIST\n')
+        tw.flush()
         ct = self.__truncateRadius
         r = 8
         for line in tr.readlines():
             elements = line.split()
             for elem in elements:
-                tw.write(elem+',')
+                tw.write(elem + ',')
             cos = abs(np.cos(np.deg2rad(float(elements[5]))))
             sin = abs(np.sin(np.deg2rad(float(elements[5]))))
             if cos > sin:
-                tw.write(str(float(elements[3])*cos*r))
+                tw.write(str(float(elements[3]) * cos * r))
             else:
-                tw.write(str(float(elements[3])*sin*r))
-            tw.write(','+str(abs(float(elements[1])-ct)+abs(float(elements[2])-ct)))
+                tw.write(str(float(elements[3]) * sin * r))
+            tw.write(',' + str(abs(float(elements[1]) - ct) + abs(float(elements[2]) - ct)))
             tw.write('\n')
+            tw.flush()
         tr.close()
         tw.close()
-        self.__pollutionText = 'pollution.csv'
+        return
+
+    def find_pollutions(self):
+        if not self.__truncated:
+            raise FileExistsError('you don\'t have the truncate image')
+        if os.path.exists(self.__pollutionText):
+            os.system('rm '+self.__pollutionText)
+        # subprocess.call('sextractor ' + self.__truncateFile, shell=True, executable='/bin/bash')
+        self.__SExOutput = subprocess.Popen('sextractor ' + self.__truncateFile,
+                                            shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.__SExOutput.wait()
+        if not os.path.exists(self.__truncateFile):
+            raise FileExistsError('your SExtractor software may thread some errors')
+        self.txt2csv()
         bg = str(self.__SExOutput.stdout.readlines()[14]).split()
         self.__backgroundMean = float(bg[2])
         self.__backgroundRMS = float(bg[4])
@@ -180,7 +190,9 @@ class Galaxy(object):
     def eliminate_pollution(self):
         if not self.__found:
             raise KeyError('you may not use SExtractor find the pollutions')
-        pdf = pd.read_csv(self.__pollutionText)
+        pdf = pd.read_csv(self.__pollutionCsv)
+        if pdf.empty:
+            print('qqqqqqqqqq')
         pdf = pdf.sort_index(by='DIST')
         pdf.index = range(len(pdf.index))
         gs = pdf.ix[0]
