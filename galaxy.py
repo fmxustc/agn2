@@ -192,7 +192,7 @@ class Galaxy(object):
             raise KeyError('you may not use SExtractor find the pollutions')
         pdf = pd.read_csv(self.__pollutionCsv)
         if pdf.empty:
-            print('qqqqqqqqqq')
+            raise ValueError('can\'t get the pollution data')
         pdf = pdf.sort_index(by='DIST')
         pdf.index = range(len(pdf.index))
         gs = pdf.ix[0]
